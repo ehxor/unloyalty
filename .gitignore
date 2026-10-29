@@ -1,0 +1,13 @@
+node_modules/
+web/dist/
+web/dev-dist/
+web/test-results/
+web/playwright-report/
+server/internal/webui/dist/*
+!server/internal/webui/dist/.keep
+*.db
+*.db-wal
+*.db-shm
+.env
+/bin/
+/data/

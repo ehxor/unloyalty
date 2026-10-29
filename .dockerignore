@@ -1,0 +1,12 @@
+.git
+**/node_modules
+web/dist
+web/dev-dist
+web/test-results
+web/playwright-report
+server/internal/webui/dist
+bin
+data
+*.db
+*.db-wal
+*.db-shm

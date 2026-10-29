@@ -1,0 +1,48 @@
+# Unloyalty on your tailnet with a Tailscale sidecar: https://unloyalty.<tailnet>.ts.net, nothing exposed publicly.
+#   TS_AUTHKEY=tskey-auth-… docker compose -f docker-compose.tailscale.yml up -d --build
+# Needs MagicDNS and HTTPS certificates enabled in the Tailscale admin console.
+# (If the Docker host is already on your tailnet you can skip the sidecar: publish 127.0.0.1:8080 and run
+#  `tailscale serve --bg 8080` on the host. See README.)
+
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: unloyalty
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+    configs:
+      - source: tailscale-serve
+        target: /config/serve.json
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+
+  unloyalty:
+    build: .
+    image: unloyalty:latest
+    restart: unless-stopped
+    # Shares the sidecar's network namespace: reachable only through `tailscale serve`.
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      ALLOW_REGISTRATION: "false"
+      SESSION_TTL: 90d
+      TRUST_PROXY_HEADERS: "true"
+    volumes:
+      - unloyalty-data:/data
+
+configs:
+  tailscale-serve:
+    # Tailscale substitutes ${TS_CERT_DOMAIN}; $$ stops Compose from interpolating it.
+    content: |
+      {
+        "TCP": { "443": { "HTTPS": true } },
+        "Web": { "$${TS_CERT_DOMAIN}:443": { "Handlers": { "/": { "Proxy": "http://127.0.0.1:8080" } } } }
+      }
+
+volumes:
+  tailscale-state:
+  unloyalty-data:
