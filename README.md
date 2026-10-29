@@ -1,5 +1,7 @@
 # Unloyalty
 
+[![CI](https://github.com/ehxor/unloyalty/actions/workflows/ci.yml/badge.svg)](https://github.com/ehxor/unloyalty/actions/workflows/ci.yml)
+
 A self-hosted, offline-first wallet for loyalty cards, library cards, gym tags and anything else with a barcode. It's a PWA: add it to your phone's Home Screen, scan or type a card in, and show a large, scannable barcode at the checkout. It works with no network at all.
 
 > **Status:** all five milestones done: offline wallet, scanning, the Go server in a 15 MB container, accounts with automatic sync, and polish. What's left is checking on real devices; see the [device checklist](#device-checklist). Design notes and test evidence are in [PLAN.md](PLAN.md).
@@ -35,17 +37,28 @@ A self-hosted, offline-first wallet for loyalty cards, library cards, gym tags a
 
 ## Quick start
 
-Phones only allow the camera and offline mode over HTTPS, so the server always runs behind something that provides HTTPS. The container serves plain HTTP on port 8080.
+The server is published as a multi-arch image (amd64 and arm64, so it runs on a Raspberry Pi):
+
+```sh
+docker pull ghcr.io/ehxor/unloyalty:latest
+```
+
+| Tag | Contents |
+|---|---|
+| `latest` | the newest build of `main` |
+| `1.2.3`, `1.2` | releases (git tags `v1.2.3`) |
+| `sha-abc1234` | one specific commit |
+
+Phones only allow the camera and offline mode over HTTPS, so the server always runs behind something that provides HTTPS. The container serves plain HTTP on port 8080. Data lives in the `/data` volume.
 
 ### Tailscale on the Docker host (simplest)
 
 If the machine running Docker is already on your tailnet:
 
 ```sh
-make image                                    # builds unloyalty:dev
 docker run -d --name unloyalty --restart unless-stopped \
   -p 127.0.0.1:8080:8080 -v unloyalty-data:/data \
-  -e TRUST_PROXY_HEADERS=true unloyalty:dev
+  -e TRUST_PROXY_HEADERS=true ghcr.io/ehxor/unloyalty:latest
 docker exec -it unloyalty /wallet create-user <you>
 tailscale serve --bg 8080
 ```
@@ -57,7 +70,7 @@ Open `https://<machine>.<tailnet>.ts.net` on your phone (with the Tailscale app 
 For a dedicated `unloyalty.<tailnet>.ts.net` name with no Tailscale on the host, use an [auth key](https://login.tailscale.com/admin/settings/keys):
 
 ```sh
-TS_AUTHKEY=tskey-auth-… docker compose -f docker-compose.tailscale.yml up -d --build
+TS_AUTHKEY=tskey-auth-… docker compose -f docker-compose.tailscale.yml up -d
 docker compose -f docker-compose.tailscale.yml exec unloyalty /wallet create-user <you>
 ```
 
@@ -68,7 +81,7 @@ This needs MagicDNS and HTTPS certificates enabled in the Tailscale admin consol
 `docker-compose.yml` assumes Traefik is watching Docker, an external `proxy` network, and a certificate resolver named `letsencrypt`:
 
 ```sh
-UNLOYALTY_HOST=wallet.example.com docker compose up -d --build
+UNLOYALTY_HOST=wallet.example.com docker compose up -d
 docker compose exec unloyalty /wallet create-user <you>
 ```
 
@@ -118,7 +131,7 @@ make test        # web typecheck + unit tests, go vet + go test
 make e2e         # Playwright against the real server binary (CSP, offline, fake camera)
 make server      # web build embedded into bin/wallet
 make run         # bin/wallet with data in ./data on :8080
-make image       # container image unloyalty:dev
+make image       # build the container image locally as unloyalty:dev
 make budgets     # image size / cold start / idle memory checks
 make icons       # regenerate web/public/icons/* from icon.svg
 make screenshots # regenerate docs/screenshots/* (seeded account, fake camera)
@@ -127,6 +140,13 @@ make screenshots # regenerate docs/screenshots/* (seeded account, fake camera)
 The first `make e2e` needs a browser: `cd web && pnpm exec playwright install chromium`. The camera tests use Chromium's fake camera with a generated barcode video, so no webcam is involved.
 
 **arm64 images:** `docker buildx build --platform linux/arm64 -t unloyalty:arm64 --load .` builds without emulation, because Go cross-compiles. Running that image on an x86 machine needs QEMU (`docker run --privileged --rm tonistiigi/binfmt --install arm64`).
+
+**CI** (`.github/workflows/ci.yml`) runs on every push and pull request:
+- **Test job:** web typecheck and unit tests, `go vet` and `go test`, and the Playwright suite against the real server binary.
+- **Image job:** builds the image, checks the budgets on amd64, and smoke-tests the arm64 image under QEMU.
+- **Publishing:** pushes to `main` and `v*` tags publish to `ghcr.io/ehxor/unloyalty`. Pull requests only build.
+
+**Updating:** `docker pull ghcr.io/ehxor/unloyalty:latest` then recreate the container. The data volume is kept, and the installed app offers "A new version is available — Reload" on its next launch.
 
 ## Device checklist
 

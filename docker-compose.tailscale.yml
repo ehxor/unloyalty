@@ -1,5 +1,5 @@
 # Unloyalty on your tailnet with a Tailscale sidecar: https://unloyalty.<tailnet>.ts.net, nothing exposed publicly.
-#   TS_AUTHKEY=tskey-auth-… docker compose -f docker-compose.tailscale.yml up -d --build
+#   TS_AUTHKEY=tskey-auth-… docker compose -f docker-compose.tailscale.yml up -d
 # Needs MagicDNS and HTTPS certificates enabled in the Tailscale admin console.
 # (If the Docker host is already on your tailnet you can skip the sidecar: publish 127.0.0.1:8080 and run
 #  `tailscale serve --bg 8080` on the host. See README.)
@@ -20,8 +20,7 @@ services:
       - tailscale-state:/var/lib/tailscale
 
   unloyalty:
-    build: .
-    image: unloyalty:latest
+    image: ghcr.io/ehxor/unloyalty:latest # or `make image` and use unloyalty:dev
     restart: unless-stopped
     # Shares the sidecar's network namespace: reachable only through `tailscale serve`.
     network_mode: service:tailscale

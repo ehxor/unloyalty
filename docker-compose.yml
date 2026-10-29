@@ -1,12 +1,11 @@
 # Unloyalty behind an existing Traefik (HTTPS via its certificate resolver).
-#   UNLOYALTY_HOST=wallet.example.com docker compose up -d --build
+#   UNLOYALTY_HOST=wallet.example.com docker compose up -d
 # Assumes Traefik watches Docker, shares the external network "proxy", and has a resolver named "letsencrypt".
 # Using Tailscale instead? See docker-compose.tailscale.yml, or README "Quick start".
 
 services:
   unloyalty:
-    build: .
-    image: unloyalty:latest
+    image: ghcr.io/ehxor/unloyalty:latest # or `make image` and use unloyalty:dev
     restart: unless-stopped
     environment:
       ALLOW_REGISTRATION: "false" # the first account can always register; add more with `create-user`

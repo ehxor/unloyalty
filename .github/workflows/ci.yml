@@ -1,0 +1,158 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  test:
+    name: Tests (web, server, e2e)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Web typecheck and unit tests
+        working-directory: web
+        run: pnpm typecheck && pnpm test
+
+      - name: Server vet and tests
+        working-directory: server
+        run: go vet ./... && go test ./...
+
+      - name: Install Playwright Chromium
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Builds the PWA, embeds it in the Go binary and runs Playwright against that binary.
+      - name: End-to-end tests
+        working-directory: web
+        run: pnpm e2e
+
+      - name: Upload Playwright results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-results
+          path: web/test-results/
+          retention-days: 7
+
+  image:
+    name: Container image
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else echo "value=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=ref,event=pr
+
+      # Single-platform builds first, loaded locally so they can be checked before anything is published.
+      - name: Build amd64
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          build-args: VERSION=${{ steps.version.outputs.value }}
+          tags: unloyalty:ci-amd64
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Check budgets (size < 25 MB, cold start < 1 s, idle memory < 30 MB)
+        run: IMAGE=unloyalty:ci-amd64 IDLE_SECONDS=15 scripts/check-budgets.sh
+
+      - name: Build arm64
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/arm64
+          build-args: VERSION=${{ steps.version.outputs.value }}
+          tags: unloyalty:ci-arm64
+          load: true
+          cache-from: type=gha
+
+      - name: Smoke test arm64 (under QEMU)
+        run: |
+          docker run -d --name arm64 --platform linux/arm64 -p 127.0.0.1:18082:8080 unloyalty:ci-arm64
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:18082/api/health; then echo; docker rm -f arm64; exit 0; fi
+            sleep 1
+          done
+          docker logs arm64; exit 1
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish multi-arch image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ steps.version.outputs.value }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
